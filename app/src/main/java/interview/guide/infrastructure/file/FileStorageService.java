@@ -29,6 +29,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class FileStorageService {
 
+    // @RequiredArgsConstructor + final = constructor inject
     private final S3Client s3Client;
     private final StorageConfigProperties storageConfig;
 
@@ -117,6 +118,7 @@ public class FileStorageService {
      */
     public boolean fileExists(String fileKey) {
         try {
+            // send a head request, head is a lightweight get which doesnt contains response body
             HeadObjectRequest headRequest = HeadObjectRequest.builder()
                     .bucket(storageConfig.getBucket())
                     .key(fileKey)
@@ -204,6 +206,8 @@ public class FileStorageService {
 
     /**
      * 生成文件键
+     * 格式: {prefix}/{yyyy/MM/dd}/{uuid}_{sanitized_filename}
+     * 示例: resumes/2026/01/02/a1b2c3d4_zhangsan
      */
     private String generateFileKey(String originalFilename, String prefix) {
         LocalDateTime now = LocalDateTime.now();
@@ -243,12 +247,14 @@ public class FileStorageService {
         StringBuilder result = new StringBuilder();
         for (char ch : input.toCharArray()) {
             try {
+                // return null if ch is not hanzi
                 String[] pinyins = PinyinHelper.toHanyuPinyinStringArray(ch, format);
                 if (pinyins != null && pinyins.length > 0) {
                     // 首字母大写（大驼峰）
                     result.append(capitalize(pinyins[0]));
                 } else {
                     // 非汉字字符直接保留，但特殊字符需要处理
+                    // special char convert to '_'
                     result.append(sanitizeChar(ch));
                 }
             } catch (BadHanyuPinyinOutputFormatCombination e) {

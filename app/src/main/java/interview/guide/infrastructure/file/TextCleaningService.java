@@ -12,7 +12,7 @@ import java.util.regex.Pattern;
 public class TextCleaningService {
 
     // ========== 预编译正则表达式（性能优化）==========
-    
+
     /**
      * 图片文件名行：image123.png
      * 整行匹配，防止误删正文中的文件名字符串
@@ -55,7 +55,7 @@ public class TextCleaningService {
 
     /**
      * 清理和规范化文本内容
-     * 
+     *
      * <p>语义级过滤（简历场景化）：</p>
      * <ul>
      *   <li>去除控制字符</li>
@@ -64,14 +64,14 @@ public class TextCleaningService {
      *   <li>去除文件协议路径</li>
      *   <li>去除符号分隔线</li>
      * </ul>
-     * 
+     *
      * <p>格式级清理：</p>
      * <ul>
      *   <li>规范化换行符</li>
      *   <li>去除行尾空格，保留空行（保持段落结构）</li>
      *   <li>压缩连续空行（最多保留 2 个换行符）</li>
      * </ul>
-     * 
+     *
      * <p>作为 RAG/AI 分析前的"保险层"，确保文本质量</p>
      *
      * @param text 原始文本
@@ -97,7 +97,7 @@ public class TextCleaningService {
 
         // 去掉行尾空格和制表符，保留空行（保持段落结构）
         t = t.replaceAll("(?m)[ \t]+$", "");
-        
+
         // 压缩连续空行：最多保留 2 个换行符（即一个空行）
         t = t.replaceAll("\\n{3,}", "\n\n");
 
@@ -110,6 +110,7 @@ public class TextCleaningService {
      * @param text      原始文本
      * @param maxLength 最大长度
      * @return 清理后的文本（可能被截断）
+     * TODO: 拦腰截断太暴力，有什么好方法吗
      */
     public String cleanTextWithLimit(String text, int maxLength) {
         String cleaned = cleanText(text);
@@ -132,9 +133,9 @@ public class TextCleaningService {
         }
 
         return text
-            .replaceAll("[\\r\\n]+", " ")
-            .replaceAll("\\s+", " ")
-            .strip();
+                .replaceAll("[\\r\\n]+", " ")
+                .replaceAll("\\s+", " ")
+                .strip();
     }
 
     /**
@@ -149,13 +150,13 @@ public class TextCleaningService {
         }
 
         return HTML_TAGS.matcher(text).replaceAll(" ")
-            .replace("&nbsp;", " ")
-            .replace("&amp;", "&")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", "\"")
-            .replace("&apos;", "'")
-            .replaceAll("\\s+", " ")
-            .strip();
+                .replace("&nbsp;", " ")
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"")
+                .replace("&apos;", "'")
+                .replaceAll("\\s+", " ")
+                .strip();
     }
 }

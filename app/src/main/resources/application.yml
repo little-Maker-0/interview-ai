@@ -183,6 +183,8 @@ app:
   # RustFS (S3兼容) 存储配置
   storage:
     endpoint: ${APP_STORAGE_ENDPOINT:http://localhost:9000}
+#    access-key: ${APP_STORAGE_ACCESS_KEY:3EGWdT1MqgcUuC0wzBQY}
+#    secret-key: ${APP_STORAGE_SECRET_KEY:KrF9I5bUECypBnDHaOZVugAh4eWQGJRx8lmksfo7}
     access-key: ${APP_STORAGE_ACCESS_KEY:minioadmin}
     secret-key: ${APP_STORAGE_SECRET_KEY:minioadmin}
     bucket: ${APP_STORAGE_BUCKET:interview-guide}
