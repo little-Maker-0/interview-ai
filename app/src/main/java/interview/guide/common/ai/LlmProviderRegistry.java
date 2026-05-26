@@ -18,9 +18,9 @@ import org.springframework.ai.chat.client.advisor.SafeGuardAdvisor;
 import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
 import org.springframework.ai.chat.client.advisor.ToolCallAdvisor;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
+import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.document.MetadataMode;
 import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
@@ -47,22 +47,26 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 public class LlmProviderRegistry {
 
+    //
     private final LlmProviderProperties properties;
     private final Map<String, ChatClient> clientCache = new ConcurrentHashMap<>();
     private final Map<String, EmbeddingModel> embeddingModelCache = new ConcurrentHashMap<>();
     private final LlmProviderRepository providerRepository;
     private final LlmGlobalSettingRepository globalSettingRepository;
     private final ApiKeyEncryptionService encryptionService;
-
+    //Spring AI 中工具调用流程的总管/调度中心
     private final ToolCallingManager toolCallingManager;
+    //将应用程序的"内部状态"转化为可供外部系统观测的"数据流"
     private final ObservationRegistry observationRegistry;
+    //ToolCallback 是 Spring AI 中工具的实际执行者，可以理解为“AI 模型与你的 Java 代码之间的适配器
+    //将 AI 模型的“调用请求”转化为真正的 Java 方法执行
     private final ToolCallback interviewSkillsToolCallback;
     private static final Map<String, String> RECOMMENDED_EMBEDDING_MODELS = Map.of(
-        "dashscope", "text-embedding-v3",
-        "glm", "embedding-3",
-        "zhipu", "embedding-3",
-        "baidu", "Embedding-V1",
-        "minimax", "embo-01"
+            "dashscope", "text-embedding-v3",
+            "glm", "embedding-3",
+            "zhipu", "embedding-3",
+            "baidu", "Embedding-V1",
+            "minimax", "embo-01"
     );
 
     @Autowired
@@ -210,7 +214,7 @@ public class LlmProviderRegistry {
     private OpenAiChatModel buildChatModel(String providerId) {
         ProviderSnapshot config = loadProviderOrThrow(providerId);
         log.info("[LlmProviderRegistry] Building ChatModel - Provider: {}, BaseUrl: {}, Model: {}",
-                 providerId, config.baseUrl(), config.model());
+                providerId, config.baseUrl(), config.model());
 
         OpenAiApi openAiApi = ApiPathResolver.buildOpenAiApi(config.baseUrl(), config.apiKey());
 
@@ -232,32 +236,32 @@ public class LlmProviderRegistry {
         ProviderSnapshot config = loadProviderOrThrow(providerId);
         if (!config.supportsEmbedding() || isBlank(config.embeddingModel())) {
             throw new BusinessException(ErrorCode.PROVIDER_CONFIG_READ_FAILED,
-                "Provider '" + providerId + "' 未配置可用的 Embedding 模型，无法执行知识库向量化");
+                    "Provider '" + providerId + "' 未配置可用的 Embedding 模型，无法执行知识库向量化");
         }
         if (looksLikeChatModel(config.embeddingModel())) {
             String recommendation = RECOMMENDED_EMBEDDING_MODELS.get(providerId.toLowerCase());
             String suffix = recommendation != null
-                ? "，推荐填写 " + recommendation
-                : "，请填写该厂商真实的 Embedding 模型名";
+                    ? "，推荐填写 " + recommendation
+                    : "，请填写该厂商真实的 Embedding 模型名";
             throw new BusinessException(ErrorCode.PROVIDER_CONFIG_READ_FAILED,
-                "Provider '" + providerId + "' 的 Embedding Model 配成了聊天模型 '"
-                    + config.embeddingModel() + "'" + suffix);
+                    "Provider '" + providerId + "' 的 Embedding Model 配成了聊天模型 '"
+                            + config.embeddingModel() + "'" + suffix);
         }
         log.info("[LlmProviderRegistry] Building EmbeddingModel - Provider: {}, BaseUrl: {}, Model: {}",
-            providerId, config.baseUrl(), config.embeddingModel());
+                providerId, config.baseUrl(), config.embeddingModel());
 
         OpenAiApi openAiApi = ApiPathResolver.buildOpenAiApi(config.baseUrl(), config.apiKey());
         OpenAiEmbeddingOptions options = OpenAiEmbeddingOptions.builder()
-            .model(config.embeddingModel())
-            .dimensions(resolveEmbeddingDimensions(config.embeddingDimensions()))
-            .build();
+                .model(config.embeddingModel())
+                .dimensions(resolveEmbeddingDimensions(config.embeddingDimensions()))
+                .build();
 
         return new OpenAiEmbeddingModel(
-            openAiApi,
-            MetadataMode.EMBED,
-            options,
-            RetryUtils.DEFAULT_RETRY_TEMPLATE,
-            observationRegistry != null ? observationRegistry : ObservationRegistry.NOOP
+                openAiApi,
+                MetadataMode.EMBED,
+                options,
+                RetryUtils.DEFAULT_RETRY_TEMPLATE,
+                observationRegistry != null ? observationRegistry : ObservationRegistry.NOOP
         );
     }
 
@@ -272,8 +276,8 @@ public class LlmProviderRegistry {
         if (config.isToolCallEnabled()) {
             if (toolCallingManager != null) {
                 advisors.add(buildToolCallAdvisor(
-                    config.isToolCallConversationHistoryEnabled(),
-                    config.isStreamToolCallResponses()));
+                        config.isToolCallConversationHistoryEnabled(),
+                        config.isStreamToolCallResponses()));
             } else {
                 log.warn("[LlmProviderRegistry] ToolCallAdvisor skipped: ToolCallingManager unavailable, provider={}", providerId);
             }
@@ -282,9 +286,9 @@ public class LlmProviderRegistry {
         if (config.isMessageChatMemoryEnabled()) {
             int maxMessages = Math.max(20, config.getMessageChatMemoryMaxMessages());
             MessageChatMemoryAdvisor memoryAdvisor = MessageChatMemoryAdvisor.builder(
-                MessageWindowChatMemory.builder()
-                    .maxMessages(maxMessages)
-                    .build()
+                    MessageWindowChatMemory.builder()
+                            .maxMessages(maxMessages)
+                            .build()
             ).build();
             advisors.add(memoryAdvisor);
         }
@@ -299,12 +303,12 @@ public class LlmProviderRegistry {
     }
 
     private ToolCallAdvisor buildToolCallAdvisor(boolean conversationHistoryEnabled,
-                                                  boolean streamToolCallResponses) {
+                                                 boolean streamToolCallResponses) {
         return ToolCallAdvisor.builder()
-            .toolCallingManager(toolCallingManager)
-            .conversationHistoryEnabled(conversationHistoryEnabled)
-            .streamToolCallResponses(streamToolCallResponses)
-            .build();
+                .toolCallingManager(toolCallingManager)
+                .conversationHistoryEnabled(conversationHistoryEnabled)
+                .streamToolCallResponses(streamToolCallResponses)
+                .build();
     }
 
     private Optional<SafeGuardAdvisor> buildSafeGuardAdvisor() {
@@ -313,16 +317,16 @@ public class LlmProviderRegistry {
             return Optional.empty();
         }
         SafeGuardAdvisor advisor = SafeGuardAdvisor.builder()
-            .sensitiveWords(config.getSafeguardWords())
-            .failureResponse("抱歉，我只能协助面试相关的任务。")
-            .order(100)
-            .build();
+                .sensitiveWords(config.getSafeguardWords())
+                .failureResponse("抱歉，我只能协助面试相关的任务。")
+                .order(100)
+                .build();
         return Optional.of(advisor);
     }
 
     private String resolveProviderId(String providerId) {
         return (providerId != null && !providerId.isBlank())
-            ? providerId : resolveDefaultChatProviderId();
+                ? providerId : resolveDefaultChatProviderId();
     }
 
     private String resolveDefaultChatProviderId() {
@@ -330,23 +334,23 @@ public class LlmProviderRegistry {
             return properties.getDefaultProvider();
         }
         return globalSettingRepository.findById(LlmGlobalSettingEntity.SINGLETON_ID)
-            .map(LlmGlobalSettingEntity::getDefaultChatProviderId)
-            .filter(id -> !isBlank(id))
-            .orElse(properties.getDefaultProvider());
+                .map(LlmGlobalSettingEntity::getDefaultChatProviderId)
+                .filter(id -> !isBlank(id))
+                .orElse(properties.getDefaultProvider());
     }
 
     private String resolveDefaultEmbeddingProviderId() {
         if (globalSettingRepository == null) {
             return !isBlank(properties.getDefaultEmbeddingProvider())
-                ? properties.getDefaultEmbeddingProvider()
-                : properties.getDefaultProvider();
+                    ? properties.getDefaultEmbeddingProvider()
+                    : properties.getDefaultProvider();
         }
         return globalSettingRepository.findById(LlmGlobalSettingEntity.SINGLETON_ID)
-            .map(LlmGlobalSettingEntity::getDefaultEmbeddingProviderId)
-            .filter(id -> !isBlank(id))
-            .orElseGet(() -> !isBlank(properties.getDefaultEmbeddingProvider())
-                ? properties.getDefaultEmbeddingProvider()
-                : properties.getDefaultProvider());
+                .map(LlmGlobalSettingEntity::getDefaultEmbeddingProviderId)
+                .filter(id -> !isBlank(id))
+                .orElseGet(() -> !isBlank(properties.getDefaultEmbeddingProvider())
+                        ? properties.getDefaultEmbeddingProvider()
+                        : properties.getDefaultProvider());
     }
 
     private ProviderSnapshot loadProviderOrThrow(String providerId) {
@@ -354,17 +358,17 @@ public class LlmProviderRegistry {
             return loadProviderFromPropertiesOrThrow(providerId);
         }
         LlmProviderEntity entity = providerRepository.findById(providerId)
-            .filter(LlmProviderEntity::isEnabled)
-            .orElseThrow(() -> new IllegalArgumentException("Unknown LLM provider: " + providerId));
+                .filter(LlmProviderEntity::isEnabled)
+                .orElseThrow(() -> new IllegalArgumentException("Unknown LLM provider: " + providerId));
         return new ProviderSnapshot(
-            entity.getId(),
-            entity.getBaseUrl(),
-            encryptionService.decrypt(entity.getApiKeyNonce(), entity.getApiKeyCiphertext()),
-            entity.getModel(),
-            entity.getEmbeddingModel(),
-            entity.getEmbeddingDimensions(),
-            entity.isSupportsEmbedding(),
-            entity.getTemperature()
+                entity.getId(),
+                entity.getBaseUrl(),
+                encryptionService.decrypt(entity.getApiKeyNonce(), entity.getApiKeyCiphertext()),
+                entity.getModel(),
+                entity.getEmbeddingModel(),
+                entity.getEmbeddingDimensions(),
+                entity.isSupportsEmbedding(),
+                entity.getTemperature()
         );
     }
 
@@ -375,16 +379,16 @@ public class LlmProviderRegistry {
             throw new IllegalArgumentException("Unknown LLM provider: " + providerId);
         }
         boolean supportsEmbedding = Boolean.TRUE.equals(config.getSupportsEmbedding())
-            || !isBlank(config.getEmbeddingModel());
+                || !isBlank(config.getEmbeddingModel());
         return new ProviderSnapshot(
-            providerId,
-            config.getBaseUrl(),
-            config.getApiKey(),
-            config.getModel(),
-            config.getEmbeddingModel(),
-            config.getEmbeddingDimensions(),
-            supportsEmbedding,
-            config.getTemperature()
+                providerId,
+                config.getBaseUrl(),
+                config.getApiKey(),
+                config.getModel(),
+                config.getEmbeddingModel(),
+                config.getEmbeddingDimensions(),
+                supportsEmbedding,
+                config.getTemperature()
         );
     }
 
@@ -402,22 +406,22 @@ public class LlmProviderRegistry {
     private boolean looksLikeChatModel(String model) {
         String lower = model.toLowerCase();
         return lower.startsWith("glm-")
-            || lower.startsWith("deepseek")
-            || lower.startsWith("kimi")
-            || lower.startsWith("moonshot")
-            || lower.startsWith("qwen")
-            || lower.startsWith("ernie");
+                || lower.startsWith("deepseek")
+                || lower.startsWith("kimi")
+                || lower.startsWith("moonshot")
+                || lower.startsWith("qwen")
+                || lower.startsWith("ernie");
     }
 
     private record ProviderSnapshot(
-        String id,
-        String baseUrl,
-        String apiKey,
-        String model,
-        String embeddingModel,
-        Integer embeddingDimensions,
-        boolean supportsEmbedding,
-        Double temperature
+            String id,
+            String baseUrl,
+            String apiKey,
+            String model,
+            String embeddingModel,
+            Integer embeddingDimensions,
+            boolean supportsEmbedding,
+            Double temperature
     ) {
     }
 }

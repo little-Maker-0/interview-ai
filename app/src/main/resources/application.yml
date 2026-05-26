@@ -30,6 +30,8 @@ spring:
     import: optional:classpath:voice-interview-opening.yml
   application:
     name: ai-interview-platform
+  profiles:
+    default: dev
 
   # 启用虚拟线程 (Java 21+)
   # 显著提升 I/O 密集型场景的并发能力，特别适合 AI 调用和 SSE 长连接
@@ -42,7 +44,7 @@ spring:
     url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:interview_guide}
     username: ${POSTGRES_USER:postgres}
     # 与根目录 docker-compose.yml 中 postgres 服务默认一致（本地只起依赖容器 + bootRun 时无需改）
-    password: ${POSTGRES_PASSWORD:password}
+    password: ${POSTGRES_PASSWORD:}
     driver-class-name: org.postgresql.Driver
 
   jpa:
@@ -141,8 +143,13 @@ app:
     advisors:
       enabled: ${APP_AI_ADVISORS_ENABLED:true}
       tool-call-enabled: ${APP_AI_ADVISORS_TOOL_CALL_ENABLED:true}
+      # 上下文膨胀——每轮都携带完整的 tool call 历史，消息列表会越来越长，token 消耗快速膨胀
+      # 面试场景不需要跨轮记忆工具调用——每道题独立查询知识库就够了，上一题查过"索引"不应该影响下一题查"事务"
       tool-call-conversation-history-enabled: ${APP_AI_ADVISORS_TOOL_CALL_CONVERSATION_HISTORY_ENABLED:false}
       stream-tool-call-responses: ${APP_AI_ADVISORS_STREAM_TOOL_CALL_RESPONSES:false}
+      #文字面试不需要，每道题独立提交，没有对话连续性需求。开了反而有两个问题：
+      #串扰——同一用户答第 1 题的请求和答第 5 题的请求如果共享 memory，LLM 会把前面题目的内容混进来
+      #Token 浪费——120 条消息可能几千 token，全部携带在每轮请求里
       message-chat-memory-enabled: ${APP_AI_ADVISORS_MESSAGE_CHAT_MEMORY_ENABLED:false}
       message-chat-memory-max-messages: ${APP_AI_ADVISORS_MESSAGE_CHAT_MEMORY_MAX_MESSAGES:120}
       simple-logger-enabled: ${APP_AI_ADVISORS_SIMPLE_LOGGER_ENABLED:false}
@@ -183,8 +190,8 @@ app:
   # RustFS (S3兼容) 存储配置
   storage:
     endpoint: ${APP_STORAGE_ENDPOINT:http://localhost:9000}
-#    access-key: ${APP_STORAGE_ACCESS_KEY:3EGWdT1MqgcUuC0wzBQY}
-#    secret-key: ${APP_STORAGE_SECRET_KEY:KrF9I5bUECypBnDHaOZVugAh4eWQGJRx8lmksfo7}
+    #    access-key: ${APP_STORAGE_ACCESS_KEY:3EGWdT1MqgcUuC0wzBQY}
+    #    secret-key: ${APP_STORAGE_SECRET_KEY:KrF9I5bUECypBnDHaOZVugAh4eWQGJRx8lmksfo7}
     access-key: ${APP_STORAGE_ACCESS_KEY:minioadmin}
     secret-key: ${APP_STORAGE_SECRET_KEY:minioadmin}
     bucket: ${APP_STORAGE_BUCKET:interview-guide}
