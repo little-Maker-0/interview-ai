@@ -44,6 +44,18 @@ public final class AsyncTaskStreamConstants {
      */
     public static final int STREAM_MAX_LEN = 1000;
 
+    // ========== PEL 超时恢复 ==========
+
+    /**
+     * PEL 消息空闲超时时间（毫秒），超过此时间的消息视为"卡死"，将被 XAUTOCLAIM 回收
+     */
+    public static final long PEL_IDLE_TIMEOUT_MS = 300_000;
+
+    /**
+     * PEL 扫描间隔（毫秒），定时任务周期检查是否有卡死的 PEL 消息
+     */
+    public static final long PEL_SCAN_INTERVAL_MS = 30_000;
+
     // ========== 知识库向量化 Stream 配置 ==========
 
     /**

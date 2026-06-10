@@ -13,6 +13,8 @@ import org.redisson.api.RMap;
 import org.redisson.api.RStream;
 import org.redisson.api.RedissonClient;
 import org.redisson.api.options.KeysScanOptions;
+import org.redisson.api.stream.AutoClaimResult;
+import org.redisson.api.stream.PendingResult;
 import org.redisson.api.stream.StreamAddArgs;
 import org.redisson.api.stream.StreamCreateGroupArgs;
 import org.redisson.api.stream.StreamMessageId;
@@ -326,6 +328,40 @@ public class RedisService {
     public void streamAck(String streamKey, String groupName, StreamMessageId... ids) {
         RStream<String, String> stream = redissonClient.getStream(streamKey, StringCodec.INSTANCE);
         stream.ack(groupName, ids);
+    }
+
+    /**
+     * 获取消费者组的 Pending 信息（XPENDING summary）
+     *
+     * @return PendingResult 包含 pending 总数、最低/最高 ID、各消费者 pending 数
+     */
+    public PendingResult streamGetPendingInfo(String streamKey, String groupName) {
+        RStream<String, String> stream = redissonClient.getStream(streamKey, StringCodec.INSTANCE);
+        return stream.getPendingInfo(groupName);
+    }
+
+    /**
+     * XAUTOCLAIM — 原子性地查找空闲超时的 PEL 消息并转移所有权到当前消费者。
+     * 一次调用同时完成"查找 + 认领 + 返回消息数据"，比 XPENDING + XCLAIM 更高效。
+     *
+     * @param streamKey    Stream 键
+     * @param groupName    消费者组名
+     * @param consumerName 目标消费者名（认领后归属此消费者）
+     * @param idleTimeMs   消息空闲时间阈值（毫秒），超过此时间才被认领
+     * @param startId      扫描起始 ID，首次传 {@link StreamMessageId#MIN}
+     * @param count        单次认领数量上限
+     * @return AutoClaimResult 包含已认领的消息数据、下一个起始 ID、被删除的消息 ID 列表
+     */
+    public AutoClaimResult<String, String> streamAutoClaim(
+            String streamKey,
+            String groupName,
+            String consumerName,
+            long idleTimeMs,
+            StreamMessageId startId,
+            int count) {
+        RStream<String, String> stream = redissonClient.getStream(streamKey, StringCodec.INSTANCE);
+        return stream.autoClaim(groupName, consumerName,
+                idleTimeMs, TimeUnit.MILLISECONDS, startId, count);
     }
 
     /**

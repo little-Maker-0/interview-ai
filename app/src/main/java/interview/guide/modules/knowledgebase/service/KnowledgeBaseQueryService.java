@@ -20,14 +20,10 @@ import reactor.core.publisher.Flux;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
+import java.time.Duration;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 /**
  * 知识库查询服务
@@ -39,6 +35,7 @@ public class KnowledgeBaseQueryService {
     private static final String NO_RESULT_RESPONSE = "抱歉，在选定的知识库中未检索到相关信息。请换一个更具体的关键词或补充上下文后再试。";
     private static final int STREAM_PROBE_CHARS = 120;
     private static final int MAX_REWRITE_HISTORY_CHAR = 200;
+    private static final int SLIDING_WINDOW_SIZE = 1;
 
     private final LlmProviderRegistry llmProviderRegistry;
     private final KnowledgeBaseVectorService vectorService;
@@ -67,16 +64,16 @@ public class KnowledgeBaseQueryService {
         this.listService = listService;
         this.countService = countService;
         this.systemPromptTemplate = new PromptTemplate(
-            resourceLoader.getResource(queryProperties.getSystemPromptPath())
-                .getContentAsString(StandardCharsets.UTF_8)
+                resourceLoader.getResource(queryProperties.getSystemPromptPath())
+                        .getContentAsString(StandardCharsets.UTF_8)
         );
         this.userPromptTemplate = new PromptTemplate(
-            resourceLoader.getResource(queryProperties.getUserPromptPath())
-                .getContentAsString(StandardCharsets.UTF_8)
+                resourceLoader.getResource(queryProperties.getUserPromptPath())
+                        .getContentAsString(StandardCharsets.UTF_8)
         );
         this.rewritePromptTemplate = new PromptTemplate(
-            resourceLoader.getResource(queryProperties.getRewritePromptPath())
-                .getContentAsString(StandardCharsets.UTF_8)
+                resourceLoader.getResource(queryProperties.getRewritePromptPath())
+                        .getContentAsString(StandardCharsets.UTF_8)
         );
         this.rewriteEnabled = queryProperties.getRewrite().isEnabled();
         this.shortQueryLength = queryProperties.getSearch().getShortQueryLength();
@@ -95,7 +92,7 @@ public class KnowledgeBaseQueryService {
      * 基于单个知识库回答用户问题
      *
      * @param knowledgeBaseId 知识库ID
-     * @param question 用户问题
+     * @param question        用户问题
      * @return AI回答
      */
     public String answerQuestion(Long knowledgeBaseId, String question) {
@@ -106,7 +103,7 @@ public class KnowledgeBaseQueryService {
      * 基于多个知识库回答用户问题（RAG）
      *
      * @param knowledgeBaseIds 知识库ID列表
-     * @param question 用户问题
+     * @param question         用户问题
      * @return AI回答
      */
     public String answerQuestion(List<Long> knowledgeBaseIds, String question) {
@@ -124,7 +121,10 @@ public class KnowledgeBaseQueryService {
             return NO_RESULT_RESPONSE;
         }
 
-        String context = relevantDocs.stream()
+        List<Document> expandedDocs = vectorService.expandWindow(
+                relevantDocs, SLIDING_WINDOW_SIZE);
+
+        String context = expandedDocs.stream()
                 .map(Document::getText)
                 .collect(Collectors.joining("\n\n---\n\n"));
 
@@ -153,7 +153,7 @@ public class KnowledgeBaseQueryService {
      */
     private String buildSystemPrompt() {
         return systemPromptTemplate.render()
-            + PromptSecurityConstants.ANTI_INJECTION_INSTRUCTION;
+                + PromptSecurityConstants.ANTI_INJECTION_INSTRUCTION;
     }
 
     /**
@@ -186,7 +186,7 @@ public class KnowledgeBaseQueryService {
      * 流式查询知识库（SSE，无上下文）
      *
      * @param knowledgeBaseIds 知识库ID列表
-     * @param question 用户问题
+     * @param question         用户问题
      * @return 流式响应
      */
     public Flux<String> answerQuestionStream(List<Long> knowledgeBaseIds, String question) {
@@ -197,8 +197,8 @@ public class KnowledgeBaseQueryService {
      * 流式查询知识库（SSE，支持多轮上下文）
      *
      * @param knowledgeBaseIds 知识库ID列表
-     * @param question 用户问题
-     * @param history 历史对话消息（可选）
+     * @param question         用户问题
+     * @param history          历史对话消息（可选）
      * @return 流式响应
      */
     public Flux<String> answerQuestionStream(List<Long> knowledgeBaseIds, String question, List<Message> history) {
@@ -221,8 +221,12 @@ public class KnowledgeBaseQueryService {
                 return Flux.just(NO_RESULT_RESPONSE);
             }
 
-            // 3. 构建上下文
-            String context = relevantDocs.stream()
+            // 3. 滑动窗口扩展：补全命中 chunk 的相邻上下文
+            List<Document> expandedDocs = vectorService.expandWindow(
+                    relevantDocs, SLIDING_WINDOW_SIZE);
+
+            // 4. 构建上下文
+            String context = expandedDocs.stream()
                     .map(Document::getText)
                     .collect(Collectors.joining("\n\n---\n\n"));
 
@@ -244,11 +248,12 @@ public class KnowledgeBaseQueryService {
 
             log.info("开始流式输出知识库回答(探测窗口): kbIds={}", knowledgeBaseIds);
             return normalizeStreamOutput(responseFlux)
-                .doOnComplete(() -> log.info("流式输出完成: kbIds={}", knowledgeBaseIds))
-                .onErrorResume(e -> {
-                    log.error("流式输出失败: kbIds={}, error={}", knowledgeBaseIds, e.getMessage(), e);
-                    return Flux.just("【错误】知识库查询失败：AI服务暂时不可用，请稍后重试。");
-                });
+                    .timeout(Duration.ofSeconds(30))
+                    .doOnComplete(() -> log.info("流式输出完成: kbIds={}", knowledgeBaseIds))
+                    .onErrorResume(e -> {
+                        log.error("流式输出失败: kbIds={}, error={}", knowledgeBaseIds, e.getMessage(), e);
+                        return Flux.just("【错误】知识库查询失败：AI服务暂时不可用，请稍后重试。");
+                    });
 
         } catch (Exception e) {
             log.error("知识库流式问答失败: {}", e.getMessage(), e);
@@ -274,22 +279,22 @@ public class KnowledgeBaseQueryService {
         return history;
     }
 
-//       清洗
+    //       清洗
     private String normalizeQuestion(String question) {
         return question == null ? "" : question.trim();
     }
 
-//    向量检索
+    //    向量检索
     private List<Document> retrieveRelevantDocs(QueryContext queryContext, List<Long> knowledgeBaseIds) {
         for (String candidateQuery : queryContext.candidateQueries()) {
             if (candidateQuery.isBlank()) {
                 continue;
             }
             List<Document> docs = vectorService.similaritySearch(
-                candidateQuery,
-                knowledgeBaseIds,
-                queryContext.searchParams().topK(),
-                queryContext.searchParams().minScore()
+                    candidateQuery,
+                    knowledgeBaseIds,
+                    queryContext.searchParams().topK(),
+                    queryContext.searchParams().minScore()
             );
             log.info("检索候选 query='{}'，命中 {} 条", candidateQuery, docs.size());
             if (hasEffectiveHit(docs)) {
@@ -310,7 +315,7 @@ public class KnowledgeBaseQueryService {
         return new SearchParams(topkLong, minScoreDefault);
     }
 
-//    改写
+    //    改写
     private String rewriteQuestion(String question, List<Message> history) {
         if (!rewriteEnabled || question.isBlank()) {
             return question;
@@ -321,9 +326,9 @@ public class KnowledgeBaseQueryService {
             variables.put("history", formatHistoryForRewrite(history));
             String rewritePrompt = rewritePromptTemplate.render(variables);
             String rewritten = getChatClient().prompt()
-                .user(rewritePrompt)
-                .call()
-                .content();
+                    .user(rewritePrompt)
+                    .call()
+                    .content();
             if (rewritten == null || rewritten.isBlank()) {
                 return question;
             }
@@ -377,10 +382,10 @@ public class KnowledgeBaseQueryService {
 
     private boolean isNoResultLike(String text) {
         return text.contains("没有找到相关信息")
-            || text.contains("未检索到相关信息")
-            || text.contains("信息不足")
-            || text.contains("超出知识库范围")
-            || text.contains("无法根据提供内容回答");
+                || text.contains("未检索到相关信息")
+                || text.contains("信息不足")
+                || text.contains("超出知识库范围")
+                || text.contains("无法根据提供内容回答");
     }
 
     /**
@@ -396,43 +401,43 @@ public class KnowledgeBaseQueryService {
             final Disposable[] disposableRef = new Disposable[1];
 
             disposableRef[0] = rawFlux.subscribe(
-                chunk -> {
-                    if (completed.get() || sink.isCancelled()) {
-                        return;
-                    }
-                    if (passthrough.get()) {
-                        sink.next(chunk);
-                        return;
-                    }
-
-                    probeBuffer.append(chunk);
-                    String probeText = probeBuffer.toString();
-                    if (isNoResultLike(probeText)) {
-                        completed.set(true);
-                        sink.next(NO_RESULT_RESPONSE);
-                        sink.complete();
-                        if (disposableRef[0] != null) {
-                            disposableRef[0].dispose();
+                    chunk -> {
+                        if (completed.get() || sink.isCancelled()) {
+                            return;
                         }
-                        return;
-                    }
+                        if (passthrough.get()) {
+                            sink.next(chunk);
+                            return;
+                        }
 
-                    if (probeBuffer.length() >= STREAM_PROBE_CHARS) {
-                        passthrough.set(true);
-                        sink.next(probeText);
-                        probeBuffer.setLength(0);
+                        probeBuffer.append(chunk);
+                        String probeText = probeBuffer.toString();
+                        if (isNoResultLike(probeText)) {
+                            completed.set(true);
+                            sink.next(NO_RESULT_RESPONSE);
+                            sink.complete();
+                            if (disposableRef[0] != null) {
+                                disposableRef[0].dispose();
+                            }
+                            return;
+                        }
+
+                        if (probeBuffer.length() >= STREAM_PROBE_CHARS) {
+                            passthrough.set(true);
+                            sink.next(probeText);
+                            probeBuffer.setLength(0);
+                        }
+                    },
+                    sink::error,
+                    () -> {
+                        if (completed.get() || sink.isCancelled()) {
+                            return;
+                        }
+                        if (!passthrough.get()) {
+                            sink.next(normalizeAnswer(probeBuffer.toString()));
+                        }
+                        sink.complete();
                     }
-                },
-                sink::error,
-                () -> {
-                    if (completed.get() || sink.isCancelled()) {
-                        return;
-                    }
-                    if (!passthrough.get()) {
-                        sink.next(normalizeAnswer(probeBuffer.toString()));
-                    }
-                    sink.complete();
-                }
             );
 
             sink.onCancel(() -> {

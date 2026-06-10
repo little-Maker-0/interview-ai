@@ -59,7 +59,7 @@ public class LlmProviderRegistry {
     //将应用程序的"内部状态"转化为可供外部系统观测的"数据流"
     private final ObservationRegistry observationRegistry;
     //ToolCallback 是 Spring AI 中工具的实际执行者，可以理解为“AI 模型与你的 Java 代码之间的适配器
-    //将 AI 模型的“调用请求”转化为真正的 Java 方法执行
+    //一个"按需加载面试角色"的工具
     private final ToolCallback interviewSkillsToolCallback;
     private static final Map<String, String> RECOMMENDED_EMBEDDING_MODELS = Map.of(
             "dashscope", "text-embedding-v3",

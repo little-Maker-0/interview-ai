@@ -1,42 +1,36 @@
 package interview.guide.modules.voiceinterview.service;
 
-import com.alibaba.dashscope.audio.omni.OmniRealtimeCallback;
-import com.alibaba.dashscope.audio.omni.OmniRealtimeConfig;
-import com.alibaba.dashscope.audio.omni.OmniRealtimeConversation;
-import com.alibaba.dashscope.audio.omni.OmniRealtimeModality;
-import com.alibaba.dashscope.audio.omni.OmniRealtimeParam;
-import com.alibaba.dashscope.audio.omni.OmniRealtimeTranscriptionParam;
-import com.alibaba.dashscope.exception.NoApiKeyException;
+import com.alibaba.dashscope.audio.omni.*;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /**
  * Qwen3 Realtime ASR Service
- *
+ * <p>
  * Provides real-time speech recognition using Alibaba Cloud DashScope's qwen3-asr-flash-realtime model.
  * This service manages WebSocket connections for multiple concurrent sessions and handles
  * audio transcription with server-side Voice Activity Detection (VAD).
- *
+ * <p>
  * Key Features:
  * - Multi-session management with thread-safe concurrent map
  * - Server-side VAD with 400ms silence duration for automatic sentence detection
  * - Callback-based result handling for real-time transcription updates
  * - Automatic resource cleanup on session termination
- *
+ * <p>
  * Configuration:
  * - Model: qwen3-asr-flash-realtime
  * - Audio format: PCM, 16kHz sample rate
@@ -100,7 +94,9 @@ public class QwenAsrService {
      */
     private final Map<String, AsrSession> sessions = new ConcurrentHashMap<>();
 
-    /** 防止同一 interview sessionId 上并发 stop/start；并在重连时与 {@link #sessionLocks} 配合 */
+    /**
+     * 防止同一 interview sessionId 上并发 stop/start；并在重连时与 {@link #sessionLocks} 配合
+     */
     private final ConcurrentHashMap<String, Object> sessionLocks = new ConcurrentHashMap<>();
 
     private Object lockForSession(String sessionId) {
@@ -124,17 +120,17 @@ public class QwenAsrService {
 
     /**
      * Start a new transcription session.
-     *
+     * <p>
      * This method creates a new WebSocket connection to the DashScope ASR service
      * and sets up callbacks for handling transcription results and errors.
-     *
+     * <p>
      * The session uses server-side VAD (Voice Activity Detection) to automatically
      * detect sentence boundaries. When speech is detected and transcribed, the
      * onResult callback will be invoked with the transcribed text.
      *
      * @param sessionId Unique identifier for this session
-     * @param onFinal Callback when a sentence/segment is finalized ({@code completed} event)
-     * @param onError Callback invoked when errors occur
+     * @param onFinal   Callback when a sentence/segment is finalized ({@code completed} event)
+     * @param onError   Callback invoked when errors occur
      * @throws IllegalStateException if session already exists or service not initialized
      */
     public void startTranscription(String sessionId, Consumer<String> onFinal, Consumer<Throwable> onError) {
@@ -326,10 +322,10 @@ public class QwenAsrService {
 
     /**
      * Send audio data to the ASR service for transcription.
-     *
+     * <p>
      * The audio data should be in PCM format at 16kHz sample rate.
      * The data is Base64-encoded before being sent to the DashScope service.
-     *
+     * <p>
      * With server-side VAD enabled, the service will automatically detect
      * speech segments and trigger transcription when silence is detected.
      *
@@ -370,7 +366,7 @@ public class QwenAsrService {
 
     /**
      * Stop transcription and close the session.
-     *
+     * <p>
      * This method notifies the ASR service to complete any pending transcription,
      * waits for the final results, and then closes the WebSocket connection.
      *
@@ -421,7 +417,7 @@ public class QwenAsrService {
 
     /**
      * Destroy the service and cleanup all active sessions.
-     *
+     * <p>
      * This method is called automatically when the Spring container shuts down.
      * It stops all active sessions and releases resources.
      */
@@ -444,7 +440,7 @@ public class QwenAsrService {
 
     /**
      * Handle server events from the DashScope ASR service.
-     *
+     * <p>
      * This method processes various event types:
      * - session.created: Session successfully created
      * - session.updated: Session configuration updated
@@ -453,10 +449,10 @@ public class QwenAsrService {
      * - error: Error occurred
      *
      * @param sessionId Session identifier
-     * @param message JSON event message from server
-     * @param onFinal Callback for finalized segment text
+     * @param message   JSON event message from server
+     * @param onFinal   Callback for finalized segment text
      * @param onPartial Callback for streaming partial text (optional)
-     * @param onError Callback for errors
+     * @param onError   Callback for errors
      */
     private void handleServerEvent(
             String sessionId,

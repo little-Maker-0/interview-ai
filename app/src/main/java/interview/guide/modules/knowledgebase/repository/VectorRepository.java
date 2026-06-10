@@ -1,12 +1,19 @@
 package interview.guide.modules.knowledgebase.repository;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.document.Document;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 /**
  * 向量存储Repository
@@ -18,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class VectorRepository {
     
     private final JdbcTemplate jdbcTemplate;
+    private final ObjectMapper objectMapper;
     
     /**
      * 删除指定知识库的所有向量数据
@@ -61,5 +69,50 @@ public class VectorRepository {
             // 抛出异常以触发事务回滚
             throw new BusinessException(ErrorCode.KNOWLEDGE_BASE_DELETE_FAILED, "删除向量数据失败");
         }
-    }    
+    }
+
+    /**
+     * 查询指定知识库中 chunk_index 在区间内的文档
+     * <p>用于滑动窗口：检索命中某个 chunk 后，拉取它前后相邻的 chunk
+     *
+     * @param kbId 知识库 ID（String 格式，与 metadata 中一致）
+     * @param fromIndex 起始 chunk_index（含）
+     * @param toIndex 结束 chunk_index（含）
+     * @return 按 chunk_index 升序排列的文档列表
+     */
+    public List<Document> findNeighborDocuments(String kbId, int fromIndex, int toIndex) {
+        String sql = """
+            SELECT content, metadata
+            FROM vector_store
+            WHERE metadata->>'kb_id' = ?
+              AND (metadata->>'chunk_index')::int BETWEEN ? AND ?
+            ORDER BY (metadata->>'chunk_index')::int
+            """;
+
+        try {
+            return jdbcTemplate.query(sql, (rs, rowNum) -> {
+                String content = rs.getString("content");
+                String metadataJson = rs.getString("metadata");
+                Map<String, Object> metadata = parseMetadataJson(metadataJson);
+                return new Document(content, metadata);
+            }, kbId, fromIndex, toIndex);
+        } catch (Exception e) {
+            log.warn("查询邻居文档失败: kbId={}, range=[{},{}], error={}",
+                    kbId, fromIndex, toIndex, e.getMessage());
+            return List.of();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseMetadataJson(String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            log.warn("解析metadata JSON失败: {}", e.getMessage());
+            return Map.of();
+        }
+    }
 }

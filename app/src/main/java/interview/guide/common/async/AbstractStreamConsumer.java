@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -21,6 +22,7 @@ public abstract class AbstractStreamConsumer<T> {
     private final RedisService redisService;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private ExecutorService executorService;
+    private ScheduledThreadPoolExecutor pelRecoveryExecutor;
     private String consumerName;
 
     protected AbstractStreamConsumer(RedisService redisService) {
@@ -47,6 +49,22 @@ public abstract class AbstractStreamConsumer<T> {
         running.set(true);
         executorService.submit(this::startConsumer);
         log.info("{} consumer started: consumerName={}", taskDisplayName(), consumerName);
+
+        this.pelRecoveryExecutor = new ScheduledThreadPoolExecutor(
+            1,
+            r -> {
+                Thread t = new Thread(r, threadName() + "-pel-recovery");
+                t.setDaemon(true);
+                return t;
+            },
+            new ThreadPoolExecutor.AbortPolicy()
+        );
+        pelRecoveryExecutor.scheduleWithFixedDelay(
+            this::recoverStalePending,
+            AsyncTaskStreamConstants.PEL_SCAN_INTERVAL_MS,
+            AsyncTaskStreamConstants.PEL_SCAN_INTERVAL_MS,
+            TimeUnit.MILLISECONDS
+        );
     }
 
     @PreDestroy
@@ -54,6 +72,9 @@ public abstract class AbstractStreamConsumer<T> {
         running.set(false);
         if (executorService != null) {
             executorService.shutdown();
+        }
+        if (pelRecoveryExecutor != null) {
+            pelRecoveryExecutor.shutdown();
         }
         log.info("{} consumer stopped: consumerName={}", taskDisplayName(), consumerName);
     }
@@ -87,6 +108,52 @@ public abstract class AbstractStreamConsumer<T> {
                 }
                 log.error("Failed to consume message", e);
             }
+        }
+    }
+
+    /**
+     * PEL 超时恢复：定时扫描 PEL 中空闲超过阈值的消息，通过 XAUTOCLAIM 认领并重新处理。
+     * 解决 Consumer 崩溃后消息永久卡在 PEL 的问题。
+     */
+    private void recoverStalePending() {
+        try {
+            var startId = StreamMessageId.MIN;
+            int totalClaimed = 0;
+
+            while (running.get()) {
+                var result = redisService.streamAutoClaim(
+                    streamKey(), groupName(), consumerName,
+                    AsyncTaskStreamConstants.PEL_IDLE_TIMEOUT_MS,
+                    startId,
+                    AsyncTaskStreamConstants.BATCH_SIZE
+                );
+
+                var claimed = result.getMessages();
+                if (claimed == null || claimed.isEmpty()) {
+                    break;
+                }
+
+                totalClaimed += claimed.size();
+                for (var entry : claimed.entrySet()) {
+                    try {
+                        processMessage(entry.getKey(), entry.getValue());
+                    } catch (Exception e) {
+                        log.error("PEL recovery message processing failed: messageId={}", entry.getKey(), e);
+                    }
+                }
+
+                var nextId = result.getNextId();
+                if (nextId == null) {
+                    break;
+                }
+                startId = nextId;
+            }
+
+            if (totalClaimed > 0) {
+                log.info("PEL recovery completed for {}: claimed={}", taskDisplayName(), totalClaimed);
+            }
+        } catch (Exception e) {
+            log.error("PEL recovery scan failed for {}", taskDisplayName(), e);
         }
     }
 
